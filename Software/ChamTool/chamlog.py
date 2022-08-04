@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 #
 # Command line tool to analyze binary dump files from the Chameleon
-# Authors: Simon K. (simon.kueppers@rub.de)
+# Authors: Simon K. (simon.kueppers@rub.de), Astra Pi (astra@flipperdevices.com)
 
 from __future__ import print_function
 
@@ -20,13 +20,25 @@ def verboseLog(text):
 	
 def formatText(log):
     formatString  = '{timestamp:0>5d} ms <{deltaTimestamp:>+6d} ms>:'
-    formatString += '{eventName:<28} ({dataLength:<3} bytes) [{data:<20}] ' \
+    formatString += '{eventName:<28} [{data}] ' \
                     '\033[94m {note} \x1b[0m \n'
 
     text = ''
 
     for logEntry in log:
+        if logEntry['data']:
+            # Add spaces every 2 characters
+            logEntry['data'] = ' '.join(logEntry['data'][i:i+2] for i in range(0, len(logEntry['data']), 2))
+        if logEntry['eventName'] == 'CODEC RX' or logEntry['eventName'] == 'CODEC RX SNI READER':
+            text += '\033[91m'
+            text += "RDR "
+        elif logEntry['eventName'] == 'CODEC RX SNI CARD W/PARITY' or logEntry['eventName'] == 'CODEC TX':
+            text += '\033[92m'
+            text += "TAG "
+        else:
+            text += "INF "
         text += formatString.format(**logEntry)
+        print("formatting log entry:" + str(logEntry))
 
     return text
 
@@ -34,6 +46,34 @@ def formatJSON(log):
     text = json.dumps(log, sort_keys=True, indent=4)
     
     return text
+
+def formatProxmarkTrace(log):
+    # Proxmark trace specifications:
+    #
+    #      /*
+    #    Traceformat:
+    #    32 bits timestamp (little endian)
+    #    16 bits duration (little endian)
+    #    15 bits data length (little endian) (0x7FFF)
+    #    1 bit isResponse (0=reader to tag, 1=tag to reader)
+    #    data length Bytes data
+    #    x Bytes parity,  where x == ceil(data length/8)
+    # */
+
+    # typedef struct {
+    #     uint32_t timestamp;
+    #     uint16_t duration;
+    #     uint16_t data_len : 15;
+    #     bool isResponse : 1;
+    #     uint8_t frame[];
+    #     // data_len         bytes of data
+    #     // ceil(data_len/8) bytes of parity
+    # } PACKED tracelog_hdr_t;
+
+    # #define TRACELOG_HDR_LEN        sizeof(tracelog_hdr_t)
+    # #define TRACELOG_PARITY_LEN(x)  (((x)->data_len - 1) / 8 + 1)
+
+    pass
 
 def main():
     outputTypes = {
@@ -74,8 +114,13 @@ def main():
                 while True:
                     stream = io.BytesIO(chameleon.read())
                     log = Chameleon.Log.parseBinary(stream, args.decode)
+                    loglist = []
                     if (len(log) > 0):
-                        print(outputTypes[args.type](log))
+                        loglist.append(outputTypes[args.type](log))
+                    loglist.sort()
+                    for line in loglist:
+                        print(line)
+                    sys.stdout.flush()
       
     else:
         if (args.logfile is not None):
